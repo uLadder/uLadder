@@ -17,14 +17,47 @@ struct Socks5HandshakeReply
     uint8_t method_;
 };
 
+enum Socks5AddressingMode
+{
+    kIpv4 = 1,
+    kDomain = 3,
+    kIpv6 = 4,
+    kAtypeUnknown = 0xFF,
+};
+
+enum Socks5Command
+{
+    kConnect = 1,
+    kBind = 2,
+    kUdpAssociate = 3,
+    kCmdUnknown = 0xFF,
+};
+
 struct Socks5Request
 {
+    Socks5Request()
+        : ver_(0xFF), cmd_(0xFF), rsv_(0xFF), atype_(0xFF)
+    {}
     uint8_t ver_;
     uint8_t cmd_;
     uint8_t rsv_;
     uint8_t atype_;
     // dst addr
     // dst port
+};
+
+enum Socks5ReplyField
+{
+    kSucceeded = 0,
+    kGeneralFailure = 1,
+    kConnectionRefusedByRuel = 2,
+    kNetworkUnreachable = 3,
+    kHostUnreachable = 4,
+    kConnectionRefused = 5,
+    kTTLExpired = 6,
+    kCmdNotSupported = 7,
+    kAtypeNotSupported = 8,
+    kUndefined = 0xFF
 };
 
 struct Socks5Reply
@@ -47,64 +80,53 @@ class Socks5Session
         kClosing,
     };
 
-    enum Socks5AddressingMode
-    {
-        kUnknown,
-        kIpv4,
-        kIpv6,
-        kDomain,
-    };
+    static const uint8_t kSocks5Version = 5;
+    static const uint8_t kReservedField = 0;
+public:
+    Socks5Session(Socks5Server& server, int peer_fd);
+    ~Socks5Session();
 
-    enum Socks5Command
-    {
-        kConnect = 1,
-        kBind = 2,
-        kUdpAssociate = 3,
-    };
+    void OnPeerEvent(ev::io &watcher, int revents);
+    void OnPeerCanRead();
+    void OnPeerCanWrite();
+    void OnPeerError();
 
-    public:
-        Socks5Session(Socks5Server& server, int peer_fd);
-        ~Socks5Session();
+    void OnRemoteEvent(ev::io &watcher, int revents);
+    void OnRemoteCanRead();
+    void OnRemoteCanWrite();
+    void OnRemoteError();
+private:
+    void OnHandshakeRequest();
+    void ReadRequest();
+    int ReadRequestDomain();
+    void OnRequestReceived();
+    void ReplayCmdNotSupport();
+    void ReplyAtypeNotSupport();
 
-        void OnPeerEvent(ev::io &watcher, int revents);
-        void OnPeerCanRead();
-        void OnPeerCanWrite();
-        void OnPeerError();
+    void ConnectRemote();
+    bool IsRemoteConnected();
+    void OnRemoteConnected();
+private:
+    Socks5Server& server_;
+    Socks5SessionState state_;
 
-        void OnRemoteEvent(ev::io &watcher, int revents);
-        void OnRemoteCanRead();
-        void OnRemoteCanWrite();
-        void OnRemoteError();
-    private:
-        void OnHandshakeRequest();
-        void OnRequest();
-        void ProcessRequest();
+    Socks5Request request_;
+    uint8_t domain_len_;
+    std::string domain_;
 
-        void ConnectRemote();
-        bool IsRemoteConnected();
-        void OnRemoteConnected();
-    private:
-        Socks5Server& server_;
-        Socks5SessionState state_;
-        Socks5AddressingMode atype_;
+    struct sockaddr_in remote_addr_;
 
-        Socks5Request request_;
-        uint8_t domain_len_;
-        void* domain_;
+    int peer_fd_;
+    std::shared_ptr<ev::io> peer_;
+    bool peer_closing_;
 
-        struct sockaddr_in remote_addr_;
+    int remote_fd_;
+    std::shared_ptr<ev::io> remote_watcher_;
+    bool remote_closing_;
 
-        int peer_fd_;
-        std::shared_ptr<ev::io> peer_;
-        bool peer_closing_;
+    ev::default_loop loop_;
 
-        int remote_fd_;
-        std::shared_ptr<ev::io> remote_watcher_;
-        bool remote_closing_;
-
-        ev::default_loop loop_;
-
-        StreamBuffer peer_buffer_;
-        StreamBuffer remote_buffer_;
-        // IConnection uladder_connection_;
+    StreamBuffer peer_buffer_;
+    StreamBuffer remote_buffer_;
+    // IConnection uladder_connection_;
 };

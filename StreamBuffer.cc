@@ -20,7 +20,7 @@ StreamBuffer::~StreamBuffer()
     free(buffer_);
 }
 
-int StreamBuffer::Append(void* buf, size_t len)
+int StreamBuffer::Append(const void* buf, size_t len)
 {
     EnsureCapacity(len);
     memcpy(buffer_ + write_index_, buf, len);
@@ -30,12 +30,46 @@ int StreamBuffer::Append(void* buf, size_t len)
     return len;
 }
 
+int StreamBuffer::Append(const std::string& buf)
+{
+    return Append(buf.c_str(), buf.size());
+}
+
+int StreamBuffer::AppendBYTE(uint8_t byte)
+{
+    return Append(&byte, sizeof(byte));
+}
+
+int StreamBuffer::AppendWORD(uint16_t word)
+{
+    return Append(&word, sizeof(word));
+}
+
+int StreamBuffer::AppendDWORD(uint32_t dword)
+{
+    return Append(&dword, sizeof(dword));
+}
+
+int StreamBuffer::AppendQWORD(uint64_t qword)
+{
+    return Append(&qword, sizeof(qword));
+}
+
 int StreamBuffer::Extract(void* buf, size_t len)
 {
     memcpy(buf, buffer_ + read_index_, len);
     size_ -= len;
     read_index_ += len;
     return len;
+}
+
+int StreamBuffer::Extract(std::string& buf, size_t len)
+{
+    void* tmp = malloc(len);
+    int ret = Extract(tmp, len);
+    buf = std::string((char*)tmp, len);
+    free(tmp);
+    return ret;
 }
 
 int StreamBuffer::AppendFromSocket(int fd)

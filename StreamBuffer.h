@@ -1,4 +1,4 @@
-#include <vector>
+#include <string>
 
 class StreamBuffer
 {
@@ -6,8 +6,15 @@ class StreamBuffer
 public:
     StreamBuffer();
     ~StreamBuffer();
-    int Append(void* buf, size_t len);
+    int Append(const void* buf, size_t len);
+    int Append(const std::string& buf);
+    int AppendBYTE(uint8_t byte);
+    int AppendWORD(uint16_t word);
+    int AppendDWORD(uint32_t word);
+    int AppendQWORD(uint64_t word);
+
     int Extract(void* buf, size_t len);
+    int Extract(std::string& buf, size_t len);
     int AppendFromSocket(int fd);
     int ExtractToSocket(int fd);
     size_t Size();

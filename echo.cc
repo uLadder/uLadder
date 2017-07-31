@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <ev++.h>
 
-#include "socks5.h"
+#include "echo.h"
 
 
 Socks5Server::Socks5Server()
