@@ -10,6 +10,7 @@
 StreamBuffer::StreamBuffer() :
     buffer_((char*)malloc(kInitSize)),
     capacity_(kInitSize),
+    size_(0),
     read_index_(0),
     write_index_(0)
 {
@@ -100,6 +101,25 @@ int StreamBuffer::AppendFromSocket(int fd)
         }
     }
 
+    return nread;
+}
+
+int StreamBuffer::AppendFromSocket(int fd, size_t limit)
+{
+    EnsureCapacity(limit);
+    int nread = 1;
+    while(nread > 0 && limit > 0)
+    {
+        LOG(INFO) << "StartRead on fd=" << fd;
+        nread = read(fd, buffer_ + write_index_, limit);
+        LOG(INFO) << "fd=" << fd << ", nread=" << nread;
+        if(nread > 0)
+        {
+            limit -= nread;
+            write_index_ += nread;
+            size_ = write_index_ - read_index_;
+        }
+    }
     return nread;
 }
 

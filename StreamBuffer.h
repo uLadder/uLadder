@@ -15,7 +15,9 @@ public:
 
     int Extract(void* buf, size_t len);
     int Extract(std::string& buf, size_t len);
+
     int AppendFromSocket(int fd);
+    int AppendFromSocket(int fd, size_t limit);
     int ExtractToSocket(int fd);
     size_t Size();
 private:

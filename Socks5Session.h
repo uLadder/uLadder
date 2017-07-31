@@ -82,6 +82,7 @@ class Socks5Session
 
     static const uint8_t kSocks5Version = 5;
     static const uint8_t kReservedField = 0;
+    static const size_t kMaxTrunk = 16384;
 public:
     Socks5Session(Socks5Server& server, int peer_fd);
     ~Socks5Session();
@@ -98,6 +99,7 @@ public:
 private:
     void OnHandshakeRequest();
     void ReadRequest();
+    void ReadDstAddr();
     int ReadRequestDomain();
     void OnRequestReceived();
     void ReplayCmdNotSupport();
@@ -106,6 +108,11 @@ private:
     void ConnectRemote();
     bool IsRemoteConnected();
     void OnRemoteConnected();
+
+    void ReadPeerData();
+    void SendPeerDataToRemote();
+    void ReadRemoteDate();
+    void SendRemoteDataToPeer();
 private:
     Socks5Server& server_;
     Socks5SessionState state_;
@@ -117,12 +124,14 @@ private:
     struct sockaddr_in remote_addr_;
 
     int peer_fd_;
-    std::shared_ptr<ev::io> peer_;
+    std::shared_ptr<ev::io> peer_watcher_;
     bool peer_closing_;
+    int peer_watch_flag_;
 
     int remote_fd_;
     std::shared_ptr<ev::io> remote_watcher_;
     bool remote_closing_;
+    int remote_watch_flag_;
 
     ev::default_loop loop_;
 

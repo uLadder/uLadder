@@ -16,21 +16,24 @@ Socks5Session::Socks5Session(Socks5Server& server, int peer_fd) :
     domain_len_(0),
     domain_(),
     peer_fd_(peer_fd),
-    peer_(std::make_shared<ev::io>()),
+    peer_watcher_(std::make_shared<ev::io>()),
     peer_closing_(false),
+    peer_watch_flag_(ev::READ | ev::WRITE),
     remote_fd_(-1),
     remote_watcher_(std::make_shared<ev::io>()),
-    remote_closing_(false)
+    remote_closing_(false),
+    remote_watch_flag_(ev::READ | ev::WRITE)
+
 {
     memset(&remote_addr_, 0, sizeof(remote_addr_));
-    peer_->set<Socks5Session, &Socks5Session::OnPeerEvent>(this);
-    peer_->start(peer_fd_, ev::READ);
+    peer_watcher_->set<Socks5Session, &Socks5Session::OnPeerEvent>(this);
+    peer_watcher_->start(peer_fd_, ev::READ);
 }
 
 Socks5Session::~Socks5Session()
 {
     close(peer_fd_);
-    peer_->stop();
+    peer_watcher_->stop();
 }
 
 void Socks5Session::OnPeerEvent(ev::io &watcher, int revents)
@@ -48,11 +51,13 @@ void Socks5Session::OnPeerEvent(ev::io &watcher, int revents)
         LOG(INFO) << "fd=" << peer_fd_ << " OnError";
         OnPeerError();
     }
+    peer_watcher_->set(peer_watch_flag_);
 }
 
 void Socks5Session::OnPeerCanRead()
 {
-    int ret = peer_buffer_.AppendFromSocket(peer_fd_);
+    peer_watch_flag_ &= (~ev::READ);
+    int ret = peer_buffer_.AppendFromSocket(peer_fd_, kMaxTrunk);
     if(ret < 0)
     {
         if(errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
@@ -61,13 +66,14 @@ void Socks5Session::OnPeerCanRead()
             peer_closing_ = true;
             state_ = Socks5SessionState::kClosing;
         }
-        peer_->set(ev::READ);
+        peer_watch_flag_ |= ev::READ;
     }
+
     else if(ret == 0)
     {
         LOG(INFO) << "Read Error, peer closed";
         peer_closing_ = true;
-        peer_->stop();
+        peer_watcher_->stop();
         state_ = Socks5SessionState::kClosing;
     }
 
@@ -85,14 +91,18 @@ void Socks5Session::OnPeerCanRead()
             ReadRequest();
             break;
         case Socks5SessionState::kEstablished:
+            ReadPeerData();
+            break;
         case Socks5SessionState::kClosing:
         default:
             break;
     }
+    peer_watcher_->set(peer_watch_flag_);
 }
 
 void Socks5Session::OnPeerCanWrite()
 {
+    peer_watch_flag_ &= (~ev::WRITE);
     int ret = remote_buffer_.ExtractToSocket(peer_fd_);
 
     if(ret <= 0)
@@ -102,9 +112,8 @@ void Socks5Session::OnPeerCanWrite()
             peer_closing_ = true;
             state_ = Socks5SessionState::kClosing;
         }
-        peer_->set(ev::WRITE);
+        peer_watch_flag_ |= ev::WRITE;
     }
-    peer_->set(ev::READ);
 }
 
 void Socks5Session::OnPeerError()
@@ -126,28 +135,35 @@ void Socks5Session::OnRemoteEvent(ev::io &watcher, int revents)
         LOG(INFO) << "fd=" << peer_fd_ << " OnError";
         OnRemoteError();
     }
+    remote_watcher_->set(remote_watch_flag_);
 }
 
 void Socks5Session::OnRemoteCanRead()
 {
+}
+
+void Socks5Session::OnRemoteCanWrite()
+{
+    remote_watch_flag_ &= (~ev::WRITE);
     switch(state_)
     {
         case Socks5SessionState::kHandshaking:
             if(IsRemoteConnected())
             {
+                OnRemoteConnected();
             }
             else
             {
+                remote_watch_flag_ |= ev::READ;
+                // OnRemoteConnectFailed();
             }
+            break;
         case Socks5SessionState::kEstablished:
         case Socks5SessionState::kClosing:
+            break;
         default:
             assert(0);
     }
-}
-
-void Socks5Session::OnRemoteCanWrite()
-{
 }
 
 void Socks5Session::OnRemoteError()
@@ -177,7 +193,7 @@ void Socks5Session::OnHandshakeRequest()
 
     LOG(INFO) << "HandShake Done";
     remote_buffer_.Append(&resp, sizeof(resp));
-    peer_->set(ev::WRITE);
+    peer_watcher_->set(ev::WRITE);
 }
 
 void Socks5Session::ReadRequest()
@@ -191,27 +207,38 @@ void Socks5Session::ReadRequest()
         }
 
         peer_buffer_.Extract(&request_, sizeof(request_));
+        ReadDstAddr();
     }
     else
     {
-        if(request_.atype_ == Socks5AddressingMode::kDomain)
-        {
-            if(ReadRequestDomain() != -1)
-            {
-                OnRequestReceived();
-            }
-        }
-        else if(request_.atype_ == Socks5AddressingMode::kIpv4)
-        {
+        ReadDstAddr();
+    }
+}
 
-            LOG(INFO) << "IPV4 is not supported";
-            assert(0);
-        }
-        else if(request_.atype_ == Socks5AddressingMode::kIpv6)
+void Socks5Session::ReadDstAddr()
+{
+    LOG(INFO) << __func__;
+    if(request_.atype_ == Socks5AddressingMode::kDomain)
+    {
+        if(ReadRequestDomain() != -1)
         {
-            LOG(INFO) << "IPV6 is not supported";
-            assert(0);
+            OnRequestReceived();
         }
+    }
+    else if(request_.atype_ == Socks5AddressingMode::kIpv4)
+    {
+        LOG(INFO) << "IPV4 is not supported";
+        assert(0);
+    }
+    else if(request_.atype_ == Socks5AddressingMode::kIpv6)
+    {
+        LOG(INFO) << "IPV6 is not supported";
+        assert(0);
+    }
+    else
+    {
+        LOG(FATAL) << "atype " << request_.atype_ << " not supported";
+        assert(0);
     }
 }
 
@@ -226,27 +253,26 @@ int Socks5Session::ReadRequestDomain()
         }
         // Process Domain Len
         peer_buffer_.Extract(&domain_len_, sizeof(domain_len_));
-        LOG(INFO) << "DOMAIN len="  << domain_len_;
+        LOG(INFO) << "DOMAIN len="  << (int)domain_len_;
     }
-    else
+
+    if(peer_buffer_.Size() < (size_t)(domain_len_ + 2))
     {
-        if(peer_buffer_.Size() < (size_t)(domain_len_ + 2))
-        {
-            return -1;
-        }
-        // Process Domain
-        peer_buffer_.Extract(domain_, domain_len_);
-
-        // Read port
-        peer_buffer_.Extract(&remote_addr_.sin_port, 2);
-
-        // TODO: Use Async DNS
-        struct hostent* ret = gethostbyname(std::string(domain_.c_str(), domain_len_).c_str());
-        assert(ret != nullptr);
-        memcpy(&remote_addr_.sin_addr.s_addr, ret->h_addr_list[0], 4);
-
-        LOG(INFO) << "DOMAIN = " << domain_ << ", ADDRESS = " << inet_ntoa(remote_addr_.sin_addr) << ":" << ntohs(remote_addr_.sin_port);
+        return -1;
     }
+    // Process Domain
+    peer_buffer_.Extract(domain_, domain_len_);
+
+    // Read port
+    peer_buffer_.Extract(&remote_addr_.sin_port, 2);
+
+    // TODO: Use Async DNS
+    struct hostent* ret = gethostbyname(std::string(domain_.c_str(), domain_len_).c_str());
+    assert(ret != nullptr);
+    memcpy(&remote_addr_.sin_addr.s_addr, ret->h_addr_list[0], 4);
+    remote_addr_.sin_family = AF_INET;
+
+    LOG(INFO) << "DOMAIN = " << domain_ << ", ADDRESS = " << inet_ntoa(remote_addr_.sin_addr) << ":" << ntohs(remote_addr_.sin_port);
     return 0;
 }
 
@@ -316,27 +342,37 @@ void Socks5Session::ConnectRemote()
 {
     LOG(INFO) << __func__;
     remote_fd_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    fcntl(remote_fd_, F_SETFL, fcntl(remote_fd_, F_GETFL) | O_NONBLOCK);
-    connect(remote_fd_, (struct sockaddr*)&remote_addr_, sizeof(remote_addr_));
+    auto ret = fcntl(remote_fd_, F_SETFL, fcntl(remote_fd_, F_GETFL) | O_NONBLOCK);
+    assert(ret == 0);
+
+    LOG(INFO) << "CONNECTING " << inet_ntoa(remote_addr_.sin_addr) << ":" << ntohs(remote_addr_.sin_port) << " on fd=" << remote_fd_;
+    ret = ::connect(remote_fd_, (struct sockaddr*)&remote_addr_, sizeof(remote_addr_));
+    assert(ret == -1 && (errno == EINPROGRESS));
 
     remote_watcher_->set<Socks5Session, &Socks5Session::OnRemoteEvent>(this);
-    remote_watcher_->start(remote_fd_, ev::READ);
+    remote_watcher_->start(remote_fd_, ev::WRITE);
 }
 
 bool Socks5Session::IsRemoteConnected()
 {
+    LOG(INFO) << __func__;
+    static int cnt = 1;
+    cnt ++;
+    assert(cnt < 10);
     char c;
+
     int rv = recv(remote_fd_, &c, 1, MSG_PEEK);
     if(rv == 0)
     {
-        DVLOG(0) << __func__ << " rv=0, errno=" << errno << " fd=" << remote_fd_;
+        LOG(INFO) << __func__ << " rv=0, errno=" << errno << " (" << strerror(errno) << " ) fd=" << remote_fd_;
         return false;
     }
     if(rv == -1 && errno != EAGAIN)
     {
-        DVLOG(0) << __func__ << " rv=-1, errno=" << errno << " (" << strerror(errno) << " ) fd=" << remote_fd_;
+        LOG(INFO) << __func__ << " rv=-1, errno=" << errno << " (" << strerror(errno) << " ) fd=" << remote_fd_;
         return false;
     }
+    LOG(INFO) << __func__ << ", remote_connected, fd=" << remote_fd_;
     return true;
 }
 
@@ -346,15 +382,31 @@ void Socks5Session::OnRemoteConnected()
     Socks5Reply resp;
     memset(&resp, 0, sizeof(resp));
 
-    resp.ver_ = 5;
-    resp.rep_ = 0;
-    resp.rsv_ = 0;
-    resp.atype_ = 1;
-
+    resp.ver_ = kSocks5Version;
+    resp.rep_ = Socks5ReplyField::kSucceeded;
+    resp.rsv_ = kReservedField;
+    resp.atype_ = Socks5AddressingMode::kDomain;
     remote_buffer_.Append(&resp, sizeof(resp));
-    remote_buffer_.Append(&remote_addr_.sin_addr.s_addr, 4);
-    remote_buffer_.Append(&remote_addr_.sin_port, 2);
+
+    remote_buffer_.Append(domain_);
+    remote_buffer_.AppendWORD(remote_addr_.sin_port);
 
     state_ = Socks5SessionState::kEstablished;
-    peer_->set(ev::WRITE);
+}
+
+
+void Socks5Session::ReadPeerData()
+{
+}
+
+void Socks5Session::SendPeerDataToRemote()
+{
+}
+
+void Socks5Session::ReadRemoteDate()
+{
+}
+
+void Socks5Session::SendRemoteDataToPeer()
+{
 }
