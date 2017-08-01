@@ -75,6 +75,8 @@ int StreamBuffer::Extract(std::string& buf, size_t len)
 
 int StreamBuffer::AppendFromSocket(int fd)
 {
+    // LOG(INFO) << __func__ << ", fd=" << fd;
+    int totalread = 0;
     int nread = 1;
     int leftspace = 0;
     while(nread > 0)
@@ -90,52 +92,55 @@ int StreamBuffer::AppendFromSocket(int fd)
         }
         else
         {
-            LOG(INFO) << "StartRead on fd=" << fd;
             nread = read(fd, buffer_ + write_index_, leftspace);
-            LOG(INFO) << "fd=" << fd << ", nread=" << nread;
             if(nread > 0)
             {
+                totalread += nread;
                 write_index_ += nread;
                 size_ = write_index_ - read_index_;
             }
         }
     }
-
+    LOG(INFO) << __func__ << ", fd=" << fd << ", totalread=" << totalread << ", ret=" << nread;
     return nread;
 }
 
 int StreamBuffer::AppendFromSocket(int fd, size_t limit)
 {
     EnsureCapacity(limit);
+    int totalread = 0;
     int nread = 1;
     while(nread > 0 && limit > 0)
     {
-        LOG(INFO) << "StartRead on fd=" << fd;
         nread = read(fd, buffer_ + write_index_, limit);
-        LOG(INFO) << "fd=" << fd << ", nread=" << nread;
         if(nread > 0)
         {
             limit -= nread;
+            totalread += nread;
             write_index_ += nread;
             size_ = write_index_ - read_index_;
         }
     }
+    LOG(INFO) << __func__ << ", fd=" << fd << ", totalread=" << totalread << ", ret=" << nread;
     return nread;
 }
 
 int StreamBuffer::ExtractToSocket(int fd)
 {
+    int totalwrite = 0;
     int nwrite = 1;
     while(nwrite > 0 && size_ > 0)
     {
         nwrite = write(fd, buffer_ + read_index_, size_);
         if(nwrite > 0)
         {
+            totalwrite += nwrite;
             read_index_ += nwrite;
             size_ = write_index_ - read_index_;
         }
     }
 
+    LOG(INFO) << __func__ << ", fd=" << fd << ", totalwrite=" << totalwrite<< ", ret=" << nwrite;
     return nwrite;
 }
 

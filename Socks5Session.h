@@ -82,7 +82,7 @@ class Socks5Session
 
     static const uint8_t kSocks5Version = 5;
     static const uint8_t kReservedField = 0;
-    static const size_t kMaxTrunk = 16384;
+    static const size_t kMaxTrunk = 65535;
 public:
     Socks5Session(Socks5Server& server, int peer_fd);
     ~Socks5Session();

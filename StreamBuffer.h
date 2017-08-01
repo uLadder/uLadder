@@ -2,7 +2,7 @@
 
 class StreamBuffer
 {
-    static const size_t kInitSize = 1024;
+    static const size_t kInitSize = 102400;
 public:
     StreamBuffer();
     ~StreamBuffer();
